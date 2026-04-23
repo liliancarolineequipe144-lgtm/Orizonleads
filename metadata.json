@@ -1,0 +1,6 @@
+{
+  "name": "LeadGen Pro Brasil",
+  "description": "Ferramenta avançada para coleta de leads do Google Maps focada em empresas sem site mas com WhatsApp.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["Google Search Grounding"]
+}

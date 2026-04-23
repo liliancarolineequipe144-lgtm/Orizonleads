@@ -1,0 +1,29 @@
+{
+  "entities": {
+    "Lead": {
+      "title": "Lead",
+      "description": "Represents a business lead captured from the map.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "address": { "type": "string" },
+        "phone": { "type": "string" },
+        "city": { "type": "string" },
+        "niche": { "type": "string" },
+        "hasWhatsApp": { "type": "boolean" },
+        "hasWebsite": { "type": "boolean" },
+        "rating": { "type": "number" },
+        "reviews": { "type": "integer" },
+        "capturedAt": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string" }
+      },
+      "required": ["name", "phone", "userId"]
+    }
+  },
+  "firestore": {
+    "/leads/{leadId}": {
+      "schema": "Lead",
+      "description": "Collection of leads captured by users."
+    }
+  }
+}
