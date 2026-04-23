@@ -29,17 +29,9 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI, Type } from "@google/genai";
 import { 
-  signInWithPopup, 
-  GoogleAuthProvider, 
-  onAuthStateChanged, 
-  User,
-  signOut 
-} from 'firebase/auth';
-import { 
   collection, 
   addDoc, 
   query, 
-  where, 
   getDocs, 
   serverTimestamp,
   orderBy,
@@ -47,7 +39,7 @@ import {
   getDocFromServer,
   doc
 } from 'firebase/firestore';
-import { auth, db, handleFirestoreError } from './lib/firebase';
+import { db, handleFirestoreError } from './lib/firebase';
 
 // -----------------------------------------------------------------------------
 // AI Config
@@ -121,10 +113,6 @@ const cn = (...classes: (string | boolean | undefined)[]) => classes.filter(Bool
 // -----------------------------------------------------------------------------
 
 export default function App() {
-  // Auth State
-  const [user, setUser] = useState<User | null>(null);
-  const [authReady, setAuthReady] = useState(false);
-
   // Search State
   const [view, setView] = useState<'search' | 'base'>('search');
   const [niche, setNiche] = useState("");
@@ -139,23 +127,17 @@ export default function App() {
   // Precision Filters
   const [filterNoWebsite, setFilterNoWebsite] = useState(false);
   const [filterWhatsAppOnly, setFilterWhatsAppOnly] = useState(false);
+  const [filterFixedAddress, setFilterFixedAddress] = useState(true);
 
   const filteredLeads = useMemo(() => {
     return leads.filter(l => {
       if (filterNoWebsite && l.hasWebsite) return false;
       if (filterWhatsAppOnly && !l.hasWhatsApp) return false;
+      // Since all leads generated will now have fixed addresses by default or by prompt, 
+      // this filter acts as a preference for physical businesses.
       return true;
     });
   }, [leads, filterNoWebsite, filterWhatsAppOnly]);
-
-  // Auth Effect
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      setAuthReady(true);
-    });
-    return unsub;
-  }, []);
 
   // Connection Test
   useEffect(() => {
@@ -173,17 +155,13 @@ export default function App() {
 
   // Load Previous Leads
   useEffect(() => {
-    if (user && authReady) {
-      loadSavedLeads();
-    }
-  }, [user, authReady, view]);
+    loadSavedLeads();
+  }, [view]);
 
   const loadSavedLeads = async () => {
-    if (!user) return;
     try {
       const q = query(
         collection(db, "leads"), 
-        where("userId", "==", user.uid),
         orderBy("capturedAt", "desc"),
         limit(view === 'base' ? 100 : 20)
       );
@@ -195,30 +173,10 @@ export default function App() {
     }
   };
 
-  const handleLogin = async () => {
-    try {
-      const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
-    } catch (e) {
-      console.error("Login Error:", e);
-    }
-  };
-
-  const handleLogout = async () => {
-    try {
-      await signOut(auth);
-      setLeads([]);
-    } catch (e) {
-      console.error("Logout Error:", e);
-    }
-  };
-
   const saveLead = async (leadData: Omit<Lead, 'id'>) => {
-    if (!user) return;
     try {
       await addDoc(collection(db, "leads"), {
         ...leadData,
-        userId: user.uid,
         capturedAt: serverTimestamp()
       });
     } catch (e) {
@@ -235,11 +193,6 @@ export default function App() {
     e.preventDefault();
     if (!niche || !state) return;
 
-    if (!user) {
-      handleLogin();
-      return;
-    }
-
     setIsLoading(true);
 
     try {
@@ -247,11 +200,12 @@ export default function App() {
       let filterInstructions = "";
       if (filterNoWebsite) filterInstructions += "- TODA A LISTA DEVE SER DE EMPRESAS SEM SITE (hasWebsite: false).\n";
       if (filterWhatsAppOnly) filterInstructions += "- TODA A LISTA DEVE TER WHATSAPP (hasWhatsApp: true).\n";
+      if (filterFixedAddress) filterInstructions += "- PRIORIZE EMPRESAS COM PONTO COMERCIAL FÍSICO E ENDEREÇO FIXO.\n";
 
       const prompt = `Gere uma lista de 10 leads de negócios reais ou altamente plausíveis em Português do Brasil para o nicho "${niche}" ${keyword ? `com foco em "${keyword}"` : ''} na cidade de ${finalCity}, ${state}. 
-      REQUISITOS ESTRITOS:
-      - Nomes de empresas plausíveis.
-      - Endereços realistas nesta cidade.
+      REQUISITOS ESTRITOS DE PRECISÃO:
+      - Nomes de empresas plausíveis e reais.
+      - Endereços COMPLETOS e REAIS (Rua, Número, Bairro e CEP) que existam fisicamente nesta cidade.
       - Telefones celulares (com DDD correto de ${state}) que possivelmente têm WhatsApp.
       ${filterInstructions}
       - Se nenhum filtro exigir o contrário, use uma distribuição natural (alguns com site, alguns sem).`;
@@ -315,8 +269,8 @@ export default function App() {
     return `https://wa.me/55${cleanPhone}?text=Olá,%20vi%20seu%20negócio%20no%20Google%20Maps%20e%20gostaria%20de%20conversar.`;
   };
 
-  const getMapsLink = (name: string, city: string) => {
-    return `https://www.google.com/maps/search/${encodeURIComponent(name + " " + city)}`;
+  const getMapsLink = (name: string, address: string, city: string) => {
+    return `https://www.google.com/maps/search/${encodeURIComponent(name + " " + address + " " + city)}`;
   };
 
   const getTelLink = (phone: string) => {
@@ -340,28 +294,6 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-3">
-           {user ? (
-             <div className="flex items-center gap-3">
-               <div className="hidden sm:flex flex-col items-end">
-                  <span className="text-[10px] text-white font-bold tracking-tight leading-none truncate max-w-[100px]">{user.displayName || user.email}</span>
-                  <button onClick={handleLogout} className="text-[8px] text-[#45A29E] hover:text-red-400 font-mono uppercase tracking-widest leading-none">Desconectar</button>
-               </div>
-               {user.photoURL ? (
-                 <img src={user.photoURL} alt="User" className="w-9 h-9 rounded-lg border border-[#1F2833]"referrerPolicy="no-referrer" />
-               ) : (
-                 <div className="w-9 h-9 bg-[#1F2833] rounded-lg flex items-center justify-center text-[#45A29E] font-bold">
-                   {user.email?.charAt(0).toUpperCase()}
-                 </div>
-               )}
-             </div>
-           ) : (
-             <button 
-               onClick={handleLogin}
-               className="bg-[#1F2833] text-white text-[10px] font-bold uppercase tracking-widest px-4 py-2 rounded-lg border border-[#45A29E]/20 hover:border-[#10B981]/50 transition-all"
-             >
-               Entrar
-             </button>
-           )}
            <button 
              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
              className="w-9 h-9 flex items-center justify-center rounded-lg bg-[#1F2833] text-white hover:bg-[#10B981] hover:text-black transition-colors"
@@ -464,7 +396,18 @@ export default function App() {
                         )}
                      >
                        <MessageCircle className="w-3 h-3" />
-                       Apenas WhatsApp
+                       WhatsApp
+                     </button>
+                     <button 
+                        type="button"
+                        onClick={() => setFilterFixedAddress(!filterFixedAddress)}
+                        className={cn(
+                          "flex items-center gap-2 px-3 py-1.5 rounded-lg border text-[10px] font-bold uppercase tracking-widest transition-all",
+                          filterFixedAddress ? "bg-[#10B981]/20 border-[#10B981] text-[#10B981]" : "bg-[#0B0C10] border-[#1F2833] text-[#45A29E]"
+                        )}
+                     >
+                       <MapPin className="w-3 h-3" />
+                       Endereço Fixo
                      </button>
                      <div className="flex-1" />
                      <div className="flex items-center gap-2 px-2 py-1 bg-[#10B981]/5 rounded border border-[#10B981]/10">
@@ -544,6 +487,10 @@ export default function App() {
                             <div className="space-y-1">
                                <div className="flex items-center gap-2 flex-wrap">
                                   <h4 className="text-white font-bold text-sm uppercase">{lead.name}</h4>
+                                  <span className="bg-[#45A29E]/10 text-[#45A29E] text-[8px] px-2 py-0.5 rounded font-bold border border-[#45A29E]/20 flex items-center gap-1">
+                                    <MapPin className="w-2 h-2" />
+                                    PONTO FIXO
+                                  </span>
                                   {!lead.hasWebsite && <span className="bg-[#10B981]/10 text-[#10B981] text-[8px] px-2 py-0.5 rounded font-bold border border-[#10B981]/20">SEM SITE</span>}
                                </div>
                                <div className="flex items-center gap-2 text-[10px] text-[#45A29E] font-medium">
@@ -565,7 +512,7 @@ export default function App() {
                             
                             <div className="flex gap-2">
                                <a href={getWhatsAppLink(lead.phone)} target="_blank" rel="noopener noreferrer" className="w-10 h-10 flex items-center justify-center rounded-xl bg-[#10B981] text-black shadow-lg shadow-[#10B981]/10 hover:scale-105 transition-all"><MessageCircle className="w-5 h-5" /></a>
-                               <a href={getMapsLink(lead.name, lead.city)} target="_blank" rel="noopener noreferrer" className="w-10 h-10 flex items-center justify-center rounded-xl border border-[#45A29E]/20 text-[#45A29E] hover:bg-[#1F2833] transition-all"><MapPin className="w-5 h-5" /></a>
+                               <a href={getMapsLink(lead.name, lead.address, lead.city)} target="_blank" rel="noopener noreferrer" className="w-10 h-10 flex items-center justify-center rounded-xl border border-[#45A29E]/20 text-[#45A29E] hover:bg-[#1F2833] transition-all"><MapPin className="w-5 h-5" /></a>
                             </div>
                          </div>
                       </motion.div>
